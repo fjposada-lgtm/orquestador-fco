@@ -268,6 +268,7 @@ const DATA = {
       { id:'e-add', name:'Agregar compañía', add:true }
     ]},
     { id:'patrimonio', name:'Patrimonio', icon:'i-diamond', source:'Family office · Valorizaciones', items:[
+      { id:'monitor-inversiones', name:'Monitor de Inversiones' },
       { id:'p-resumen', name:'Resumen Patrimonial' }, { id:'p-empresas', name:'Empresas' },
       { id:'p-propiedades', name:'Propiedades' }, { id:'p-terrenos', name:'Terrenos' },
       { id:'p-inversiones', name:'Inversiones' }, { id:'p-liquidez', name:'Liquidez' },
@@ -807,9 +808,20 @@ const UI = {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   },
 
+  /* Renderizadores registrados por módulos externos (por ejemplo
+     js/inversiones.js). Clave = id del ítem de navegación. Si no hay uno
+     registrado se usa la vista de módulo genérica. */
+  moduleRenderers: {},
+
+  renderModuleView(groupId, itemId) {
+    const propio = UI.moduleRenderers[itemId];
+    if (propio) propio($('#view-module'), { groupId, itemId });
+    else UI.renderModule(groupId, itemId);
+  },
+
   showModule(groupId, itemId) {
     STATE.view = 'module'; STATE.moduleId = itemId;
-    UI.renderModule(groupId, itemId);
+    UI.renderModuleView(groupId, itemId);
     $('#view-home').classList.add('is-hidden');
     $('#view-module').classList.remove('is-hidden');
     UI.markNav();
@@ -827,7 +839,7 @@ const UI = {
       CHARTS.update();
     } else {
       const g = DATA.nav.find(x => x.items.some(i => i.id === STATE.moduleId));
-      if (g) UI.renderModule(g.id, STATE.moduleId);
+      if (g) UI.renderModuleView(g.id, STATE.moduleId);
     }
   },
 

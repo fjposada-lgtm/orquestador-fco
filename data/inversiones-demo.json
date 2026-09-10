@@ -1,0 +1,176 @@
+{
+  "meta": {
+    "modulo": "Monitor de Inversiones",
+    "generado": "2026-09-10T07:15:00-03:00",
+    "fuente": "demo",
+    "moneda": "USD",
+    "aviso": "Datos de demostración. No corresponden a cotizaciones reales ni a posiciones efectivas. Módulo de apoyo al análisis: no ejecuta operaciones."
+  },
+
+  "resumenDia": {
+    "valorCartera": 28.7,
+    "moneda": "USD",
+    "titular": "Jornada plana con rotación interna: el cobre compensa la caída del litio.",
+    "comentario": "La cartera cierra prácticamente sin cambios pese a dos movimientos fuertes de signo opuesto. SQM-B corrige por cuarta sesión consecutiva y arrastra el bloque de acciones locales, mientras el cobre sube 2,1% y sostiene el resultado agregado. El dólar avanza 0,9%, lo que mejora la valorización en pesos pero encarece los insumos importados del negocio operativo.",
+    "mercado": "Bolsa de Santiago cerrada · Wall Street en curso"
+  },
+
+  "activos": [
+    {
+      "ticker": "SQM-B",
+      "nombre": "Sociedad Química y Minera",
+      "clase": "Acción · Chile",
+      "moneda": "CLP",
+      "precio": 38450,
+      "varDia": -3.2,
+      "varSemana": -6.8,
+      "varMes": -9.4,
+      "peso": 11.6,
+      "atencion": "alta",
+      "nota": "Cuarta sesión a la baja por corrección del precio del litio."
+    },
+    {
+      "ticker": "USDCLP",
+      "nombre": "Dólar observado",
+      "clase": "Divisa",
+      "moneda": "CLP",
+      "precio": 948.6,
+      "varDia": 0.9,
+      "varSemana": 1.8,
+      "varMes": -1.2,
+      "peso": 12.1,
+      "atencion": "alta",
+      "nota": "Afecta directamente el costo de insumos importados del grupo."
+    },
+    {
+      "ticker": "CMPC",
+      "nombre": "Empresas CMPC",
+      "clase": "Acción · Chile",
+      "moneda": "CLP",
+      "precio": 1842,
+      "varDia": -1.8,
+      "varSemana": -3.4,
+      "varMes": 2.1,
+      "peso": 14.2,
+      "atencion": "media",
+      "nota": "Presión en precios de celulosa por nuevos embarques a Asia."
+    },
+    {
+      "ticker": "COBRE",
+      "nombre": "Cobre COMEX",
+      "clase": "Commodity · lb",
+      "moneda": "USD",
+      "precio": 4.62,
+      "varDia": 2.1,
+      "varSemana": 4.6,
+      "varMes": 7.8,
+      "peso": 8.4,
+      "atencion": "media",
+      "nota": "Relevante como indicador adelantado de la demanda de construcción."
+    },
+    {
+      "ticker": "VOO",
+      "nombre": "Vanguard S&P 500 ETF",
+      "clase": "ETF · EE.UU.",
+      "moneda": "USD",
+      "precio": 612.4,
+      "varDia": 0.6,
+      "varSemana": 1.2,
+      "varMes": 3.4,
+      "peso": 22.4,
+      "atencion": "baja",
+      "nota": "Núcleo del portafolio. Sin cambios en la tesis."
+    },
+    {
+      "ticker": "FRFL",
+      "nombre": "Fondo Renta Fija Local",
+      "clase": "Fondo mutuo",
+      "moneda": "CLP",
+      "precio": 1284.5,
+      "varDia": 0.1,
+      "varSemana": 0.3,
+      "varMes": 0.9,
+      "peso": 13.7,
+      "atencion": "baja",
+      "nota": "Reserva de liquidez del portafolio."
+    },
+    {
+      "ticker": "FALABELLA",
+      "nombre": "S.A.C.I. Falabella",
+      "clase": "Acción · Chile",
+      "moneda": "CLP",
+      "precio": 2914,
+      "varDia": 1.4,
+      "varSemana": 2.9,
+      "varMes": 5.2,
+      "peso": 9.8,
+      "atencion": "baja",
+      "nota": "Recuperación gradual del consumo interno."
+    },
+    {
+      "ticker": "BTU-2032",
+      "nombre": "Bono Tesorería 2032",
+      "clase": "Renta fija",
+      "moneda": "CLP",
+      "precio": 98.4,
+      "varDia": -0.2,
+      "varSemana": -0.6,
+      "varMes": 1.4,
+      "peso": 7.8,
+      "atencion": "baja",
+      "nota": "Duración 6,2 años. Sensible a movimientos de la TPM."
+    }
+  ],
+
+  "noticias": [
+    {
+      "titulo": "Litio: el precio spot cae por cuarta semana consecutiva",
+      "fuente": "Agencia internacional (demo)",
+      "hora": "07:20",
+      "relacionado": "SQM-B",
+      "tono": "negativo"
+    },
+    {
+      "titulo": "El cobre supera los USD 4,60 por libra impulsado por la demanda asiática",
+      "fuente": "Agencia internacional (demo)",
+      "hora": "06:45",
+      "relacionado": "COBRE",
+      "tono": "positivo"
+    },
+    {
+      "titulo": "Banco Central mantiene la tasa de política monetaria en 4,75%",
+      "fuente": "Prensa económica local (demo)",
+      "hora": "08:10",
+      "relacionado": "USDCLP",
+      "tono": "neutro"
+    },
+    {
+      "titulo": "Celulosa: nuevos embarques presionan los precios en Asia",
+      "fuente": "Consultora sectorial (demo)",
+      "hora": "05:30",
+      "relacionado": "CMPC",
+      "tono": "negativo"
+    },
+    {
+      "titulo": "El S&P 500 cierra en máximos tras resultados del sector tecnológico",
+      "fuente": "Prensa internacional (demo)",
+      "hora": "22:15",
+      "relacionado": "VOO",
+      "tono": "positivo"
+    }
+  ],
+
+  "analisis": {
+    "titulo": "Lectura del día",
+    "generado": "07:15",
+    "texto": "La cartera está plana en el día, pero eso esconde dos movimientos relevantes de signo opuesto que conviene mirar por separado antes que el agregado.",
+    "puntos": [
+      "SQM-B acumula −6,8% en la semana y −9,4% en el mes. Es la posición que más se ha deteriorado y la que concentra el mayor riesgo idiosincrático del portafolio.",
+      "El cobre sube 2,1% en el día y 7,8% en el mes. Además de la posición financiera, es una señal favorable para la demanda de construcción del negocio operativo.",
+      "El dólar en 948,6 con alza de 0,9% tiene doble efecto: mejora la valorización en pesos de los activos en USD, pero encarece los insumos importados del grupo.",
+      "La renta fija y el fondo local aportan estabilidad: 21,5% del portafolio se mueve menos de 0,3% en el día.",
+      "Concentración a vigilar: VOO y CMPC suman 36,6% del portafolio."
+    ],
+    "advertencia": "Texto de demostración. Este panel aún no está conectado a un modelo de análisis; su contenido es fijo y no constituye recomendación de inversión."
+  }
+}
