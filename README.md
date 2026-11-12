@@ -87,6 +87,38 @@ script.js     Lógica de la aplicación, separada en capas
 
 ---
 
+## Datos reales desde Power BI
+
+La Home puede mostrar datos reales del modelo semántico
+**Reporte_de_Ventas_Corporativo_TX** (área de trabajo *Gerencia*).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\actualizar-powerbi.ps1
+```
+
+El script pide iniciar sesión con un código de dispositivo de Microsoft, ejecuta
+consultas DAX **de sólo lectura** y escribe `data-real/powerbi.json`. No
+actualiza, publica ni modifica nada en Power BI ni en sus fuentes, y no guarda
+el token. `data-real/` está excluido de git: las cifras reales no se versionan.
+
+Al recargar, `js/powerbi.js` detecta el archivo y reemplaza los bloques que
+tienen equivalente real. Si el archivo no existe, la Home sigue con los datos
+simulados.
+
+| Bloque de la Home | Origen con datos reales |
+|-------------------|-------------------------|
+| KPIs, gráfico de 12 meses, ventas por sociedad, semáforo | Medidas `Despachado Total Corporativo`, `Costo Total Corporativo` y `Proyeccion de Despacho Corporativo` |
+| Alertas, resumen ejecutivo, notificaciones | Calculados sobre esas cifras |
+| Paco AI: ventas, margen y sociedades | Calculado sobre esas cifras; el resto de sus respuestas se rotula como demostración |
+| Agenda, mapa, proyectos, patrimonio, personal | Siguen simulados y se rotulan **Simulado** |
+
+Definiciones: los montos van en millones de pesos (MM$). **Margen bruto** es
+venta menos costo directo; no es EBITDA. **A terceros** es la venta menos lo
+despachado a empresas relacionadas del grupo. Las variaciones del consolidado
+se calculan en base comparable: excluyen las sociedades sin datos recientes.
+Caja, cuentas por cobrar, producción y presupuesto no están en ese modelo y
+por eso no aparecen en la Home con datos reales.
+
 ## Estado de los datos
 
 **Todas las cifras del repositorio son simuladas.** Son internamente coherentes

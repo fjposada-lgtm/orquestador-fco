@@ -209,7 +209,7 @@
     const alta = porNivel(act, 'alta').length;
 
     const stats = [
-      { k:'Valor de cartera',      v:`<span class="money">${UTIL.musd(Number(r.valorCartera) || 0)}</span>`, d:null },
+      { k:'Valor de cartera',      v:`<span class="money">${UTIL.usd(Number(r.valorCartera) || 0)}</span>`, d:null },
       { k:'Variación diaria',      v:UTIL.pct(vp, 2), d:vp },
       { k:'Activos observados',    v:String(act.length), d:null },
       { k:'En atención alta',      v:String(alta), d:null },

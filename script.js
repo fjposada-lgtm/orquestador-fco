@@ -348,8 +348,17 @@ const UTIL = {
     return Number(n).toLocaleString('es-CL', { minimumFractionDigits: dec, maximumFractionDigits: dec });
   },
 
-  /** Millones de USD con escala automática a miles cuando corresponde. */
+  /** Monto operacional en millones, en la moneda de DATA.moneda (USD por
+      defecto; CLP cuando js/powerbi.js carga datos reales). */
   musd(n, dec = 1) {
+    if (DATA.moneda !== 'CLP') return UTIL.usd(n, dec);
+    const abs = Math.abs(n), s = n < 0 ? '−' : '';
+    if (abs < 1 && abs > 0) return s + '$ ' + UTIL.num(abs * 1000, 0) + ' K';
+    return s + 'MM$ ' + UTIL.num(abs, abs >= 100 ? 0 : 1);
+  },
+
+  /** Millones de USD con escala automática a miles cuando corresponde. */
+  usd(n, dec = 1) {
     const abs = Math.abs(n);
     if (abs < 1 && abs > 0) return (n < 0 ? '−' : '') + 'US$ ' + UTIL.num(Math.abs(n) * 1000, 0) + ' K';
     return (n < 0 ? '−' : '') + 'US$ ' + UTIL.num(Math.abs(n), dec) + ' M';
@@ -669,7 +678,7 @@ const UI = {
   /* ---------- Patrimonio ---------- */
   renderWealth() {
     const show = STATE.wealthVisible;
-    const val = v => show ? UTIL.musd(v) : '••• •••';
+    const val = v => show ? UTIL.usd(v) : '••• •••';
     const cls = show ? '' : 'masked';
 
     $('#wealthList').innerHTML =
@@ -732,7 +741,8 @@ const UI = {
     const it = g.items.find(x => x.id === itemId);
     const f = UTIL.factor(false);
 
-    const mini = [
+    /* Con datos reales, js/powerbi.js entrega este resumen ya calculado. */
+    const mini = DATA.moduleMini ? DATA.moduleMini() : [
       { k:'Ventas ' + UTIL.period().ctx, v:UTIL.musd(128.4 * f), d:12.8 },
       { k:'EBITDA', v:UTIL.musd(18.7 * f), d:9.4 },
       { k:'Cumplimiento presupuesto', v:'103%', d:3.0 },
@@ -758,7 +768,7 @@ const UI = {
           <article class="kpi" style="--kpi-accent:#3B82F6">
             <div class="kpi__label">${UTIL.esc(m.k)}</div>
             <div class="kpi__value"><span class="money">${m.v}</span></div>
-            <div class="kpi__meta"><span class="kpi__delta ${UTIL.dir(m.d)}">${UTIL.pct(m.d)}</span><span>vs. período anterior</span></div>
+            <div class="kpi__meta"><span class="kpi__delta ${UTIL.dir(m.d)}">${UTIL.pct(m.d)}</span><span>${UTIL.esc(m.s || 'vs. período anterior')}</span></div>
           </article>`).join('')}
       </div>
 
@@ -869,11 +879,20 @@ const CHARTS = {
   },
 
   margin() {
-    return DATA.series.ebitda.map((e, i) => +((e / DATA.series.ventas[i]) * 100).toFixed(1));
+    return DATA.series.ebitda.map((e, i) =>
+      DATA.series.ventas[i] ? +((e / DATA.series.ventas[i]) * 100).toFixed(1) : null);
+  },
+
+  /* Nombres de las series. js/powerbi.js los reemplaza por los de las
+     medidas reales (p. ej. margen bruto en lugar de EBITDA). */
+  terms() {
+    return Object.assign({ ebitda:'EBITDA', margen:'Margen EBITDA %', presupuesto:'Presupuesto',
+                           forecast:'Forecast', cumpl:'Cumpl. presupuesto' }, DATA.terms || {});
   },
 
   config(metric) {
     const L = DATA.series.labels;
+    const T = CHARTS.terms();
     const grid = { color:'rgba(255,255,255,.05)', drawTicks:false };
     const ticks = { color:'#64798F', font:{ family:'Inter', size:10 }, padding:8 };
 
@@ -933,23 +952,23 @@ const CHARTS = {
     let ds;
     switch (metric) {
       case 'ebitda':
-        ds = [bar('EBITDA', CHARTS.scaled('ebitda'), '#19C37D'),
+        ds = [bar(T.ebitda, CHARTS.scaled('ebitda'), '#19C37D'),
               line('Ventas', CHARTS.scaled('ventas'), '#3B82F6', [5, 4])];
         break;
       case 'margen':
-        ds = [fill('Margen EBITDA %', CHARTS.margin(), '#8B7FF0')];
+        ds = [fill(T.margen, CHARTS.margin(), '#8B7FF0')];
         break;
       case 'presupuesto':
         ds = [bar('Ventas reales', CHARTS.scaled('ventas'), '#3B82F6'),
-              bar('Presupuesto', CHARTS.scaled('presupuesto'), '#64798F', .55)];
+              bar(T.presupuesto, CHARTS.scaled('presupuesto'), '#64798F', .55)];
         break;
       case 'forecast':
         ds = [bar('Ventas reales', CHARTS.scaled('ventas'), '#3B82F6', .7),
-              line('Forecast', CHARTS.scaled('forecast'), '#FFB020', [6, 4])];
+              line(T.forecast, CHARTS.scaled('forecast'), '#FFB020', [6, 4])];
         break;
       default:
         ds = [fill('Ventas', CHARTS.scaled('ventas'), '#3B82F6'),
-              line('EBITDA', CHARTS.scaled('ebitda'), '#19C37D')];
+              line(T.ebitda, CHARTS.scaled('ebitda'), '#19C37D')];
     }
 
     return { type:'bar', data:{ labels:L, datasets:ds }, options:base };
@@ -1018,12 +1037,14 @@ const CHARTS = {
     const f = UTIL.entity().factor;
     const v = DATA.series.ventas, e = DATA.series.ebitda, p = DATA.series.presupuesto;
     const sum = a => a.reduce((x, y) => x + y, 0);
+    const T = CHARTS.terms();
+    const best = v.indexOf(Math.max(...v));
     const stats = [
       { k:'Acumulado 12 M',   v:`<span class="money">${UTIL.musd(sum(v) * f)}</span>` },
-      { k:'EBITDA 12 M',      v:`<span class="money">${UTIL.musd(sum(e) * f)}</span>` },
-      { k:'Margen promedio',  v:`${UTIL.num((sum(e) / sum(v)) * 100)}%` },
-      { k:'Cumpl. presupuesto', v:`${UTIL.num((sum(v) / sum(p)) * 100, 0)}%` },
-      { k:'Mejor mes',        v:`Jun · <span class="money">${UTIL.musd(Math.max(...v) * f)}</span>` }
+      { k:T.ebitda + ' 12 M', v:`<span class="money">${UTIL.musd(sum(e) * f)}</span>` },
+      { k:'Margen promedio',  v:sum(v) ? `${UTIL.num((sum(e) / sum(v)) * 100)}%` : '—' },
+      { k:T.cumpl,            v:sum(p) ? `${UTIL.num((sum(v) / sum(p)) * 100, 0)}%` : '—' },
+      { k:'Mejor mes',        v:`${DATA.series.labels[best]} · <span class="money">${UTIL.musd(v[best] * f)}</span>` }
     ];
     $('#chartFoot').innerHTML = stats.map(s =>
       `<div class="stat"><span class="stat__k">${s.k}</span><span class="stat__v">${s.v}</span></div>`).join('');
@@ -1038,15 +1059,15 @@ const AI = {
   /* Base de conocimiento simulada. Sustituible por un endpoint LLM + RAG. */
   kb: [
     { keys:['venta','vendimos','ventas del mes','mes'],
-      a:() => `Las ventas del mes alcanzan <b>${UTIL.musd(11.8)}</b>, un <b>103% del presupuesto</b> y +3,0% sobre el mes anterior.
-        Acumulado YTD llegamos a <b>${UTIL.musd(128.4)}</b>, creciendo <b>12,8%</b> respecto al año pasado.
+      a:() => `Las ventas del mes alcanzan <b>${UTIL.usd(11.8)}</b>, un <b>103% del presupuesto</b> y +3,0% sobre el mes anterior.
+        Acumulado YTD llegamos a <b>${UTIL.usd(128.4)}</b>, creciendo <b>12,8%</b> respecto al año pasado.
         <div class="kv"><span>Hormigones</span><b>US$ 72,4 M · +9,4%</b></div>
         <div class="kv"><span>Morteros</span><b>US$ 29,8 M · +14,2%</b></div>
         <div class="kv"><span>Pinturas</span><b>US$ 8,1 M · +18,6%</b></div>
         El principal motor del mes fue Perú, con crecimiento de 24%.` },
 
     { keys:['ebitda','margen del grupo','rentabilidad'],
-      a:() => `El EBITDA acumulado es de <b>${UTIL.musd(18.7)}</b> con un margen de <b>14,6%</b>.
+      a:() => `El EBITDA acumulado es de <b>${UTIL.usd(18.7)}</b> con un margen de <b>14,6%</b>.
         Proyectado a cierre de año estimo <b>US$ 24,8 M</b> con margen de 14,7%, asumiendo estacionalidad normal del cuarto trimestre.
         <ul>
           <li>Mejor margen: <b>Inversiones TX (77,4%)</b> y <b>Cementos Transex (18,3%)</b>.</li>
@@ -1064,7 +1085,7 @@ const AI = {
         La brecha total contra presupuesto es de <b>+US$ 3,7 M</b> favorable.` },
 
     { keys:['atrasado','vencido','cobrar','cartera','moroso','cxc'],
-      a:() => `Tienes <b>${UTIL.musd(16.2)}</b> en cuentas por cobrar y un DSO de <b>47 días</b> (era 42 hace tres semanas).
+      a:() => `Tienes <b>${UTIL.usd(16.2)}</b> en cuentas por cobrar y un DSO de <b>47 días</b> (era 42 hace tres semanas).
         Cartera vencida sobre 60 días: <b>US$ 1,36 M</b> (8,4%).
         <div class="kv"><span>Constructora X</span><b>US$ 680 K · 90+ días</b></div>
         <div class="kv"><span>Inmobiliaria Andes</span><b>US$ 214 K · 60 días</b></div>
@@ -1511,6 +1532,7 @@ const EVENTS = {
   /* Latido de datos: simula la llegada de información en vivo desde las fuentes.
      Al conectar APIs reales, reemplazar por polling/websocket sobre DATA. */
   setInterval(() => {
+    if (DATA.real) return;                        // con datos reales no se simula nada
     if (STATE.view !== 'home' || document.hidden) return;
     const k = DATA.kpis[2];                       // Ventas del mes
     k.value = +(k.value + (Math.random() - 0.42) * 0.05).toFixed(2);
