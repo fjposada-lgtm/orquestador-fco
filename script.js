@@ -117,6 +117,9 @@ const DATA = {
 
   /* --- Alertas ejecutivas ----------------------------------------------- */
   alerts: [
+    { prio:'alta', company:'Integraciones', time:'ahora',
+      text:'Mantener abierta la integración pendiente de Power BI y ERP para profundizar ventas, márgenes, cartera, producción, proyectos, patrimonio y agenda.',
+      impact:'Pendiente', value:'Datos transaccionales exactos' },
     { prio:'alta', company:'Cementos Transex', time:'hace 2 h',
       text:'El margen de adhesivos cayó 2,8 puntos en el trimestre por alza del costo de resinas.',
       impact:'Impacto estimado', value:'−US$ 1,1 M EBITDA anualizado' },
@@ -196,7 +199,7 @@ const DATA = {
   personal: [
     { k:'Agenda',        n:'5',    s:'reuniones hoy',   icon:'i-calendar', goto:'agenda' },
     { k:'Correo',        n:'12',   s:'requieren respuesta', icon:'i-mail', goto:'correo' },
-    { k:'Tareas',        n:'7',    s:'3 vencen hoy',    icon:'i-check',    goto:'tareas' },
+    { k:'Tareas',        n:'8',    s:'1 alerta abierta',icon:'i-check',    goto:'tareas' },
     { k:'Documentos',    n:'4',    s:'esperan tu firma',icon:'i-doc',      goto:'documentos' },
     { k:'Viajes',        n:'Lima', s:'14–16 sep',       icon:'i-plane',    goto:'viajes' },
     { k:'Entrenamiento', n:'4/5',  s:'sesiones semana', icon:'i-heart',    goto:'entrenamiento' },
@@ -204,8 +207,21 @@ const DATA = {
     { k:'Familia',       n:'2',    s:'recordatorios',   icon:'i-user',     goto:'familia' }
   ],
 
+  /* --- Tareas personales ----------------------------------------------- */
+  tasks: [
+    {
+      title:'Mantener abierta la integración pendiente de Power BI y ERP',
+      description:'Mantener abierta la alerta sobre la integración pendiente de Power BI y ERP para profundizar ventas, márgenes, cartera, producción, proyectos, patrimonio y agenda con datos transaccionales.',
+      owner:'Francisco',
+      due:'Hoy',
+      priority:'Alta',
+      status:'Abierta'
+    }
+  ],
+
   /* --- Notificaciones ---------------------------------------------------- */
   notifications: [
+    { type:'amber', icon:'i-alert',  t:'Alerta abierta: integración pendiente de Power BI y ERP', m:'Orquestador · ahora', unread:true },
     { type:'red',   icon:'i-alert',  t:'Cartera vencida sobre umbral: Constructora X supera US$ 680 K', m:'Finanzas · hace 12 min', unread:true },
     { type:'amber', icon:'i-factory',t:'Planta Santiago bajo 92% de capacidad por segunda semana',      m:'Operaciones · hace 1 h',  unread:true },
     { type:'green', icon:'i-pulse',  t:'TX Perú cerró el mes 24% sobre el año anterior',                m:'Comercial · hace 2 h',    unread:true },
@@ -821,7 +837,43 @@ const UI = {
   /* Renderizadores registrados por módulos externos (por ejemplo
      js/inversiones.js). Clave = id del ítem de navegación. Si no hay uno
      registrado se usa la vista de módulo genérica. */
-  moduleRenderers: {},
+  moduleRenderers: {
+    tareas(root) {
+      root.innerHTML = `
+        <div class="mod-head">
+          <div>
+            <div class="crumb">Personal</div>
+            <h2 class="mod-title">Tareas</h2>
+            <p class="mod-sub">Tareas abiertas de Francisco Posada.</p>
+          </div>
+          <button class="btn btn--ghost btn--sm" data-nav="home">Volver a Home</button>
+        </div>
+        <section class="panel">
+          <header class="panel__head">
+            <div>
+              <h2 class="panel__title">Alertas y tareas abiertas</h2>
+              <p class="panel__sub">${DATA.tasks.length} tarea pendiente</p>
+            </div>
+          </header>
+          <div style="display:grid;gap:10px;padding:16px">
+            ${DATA.tasks.map(task => `
+              <article style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel)">
+                <div>
+                  <div style="font-weight:700;margin-bottom:6px">${UTIL.esc(task.title)}</div>
+                  <div style="color:var(--muted);line-height:1.5">${UTIL.esc(task.description)}</div>
+                  <div style="margin-top:10px;color:var(--muted);font-size:12px">
+                    Responsable: ${UTIL.esc(task.owner)} · Vence: ${UTIL.esc(task.due)}
+                  </div>
+                </div>
+                <div style="display:flex;align-items:flex-start;gap:8px">
+                  <span class="badge badge--amber">${UTIL.esc(task.priority)}</span>
+                  <span class="badge badge--amber">${UTIL.esc(task.status)}</span>
+                </div>
+              </article>`).join('')}
+          </div>
+        </section>`;
+    }
+  },
 
   renderModuleView(groupId, itemId) {
     const propio = UI.moduleRenderers[itemId];
