@@ -849,11 +849,18 @@
       return;
     }
 
+    /* Dos vías de carga: data-real/powerbi-data.js (una etiqueta <script>, que
+       funciona también al abrir index.html directo desde el disco) y, si no
+       está, el JSON por fetch (requiere servir el proyecto por HTTP). */
     let json;
     try {
-      const res = await fetch(DATA_URL, { cache:'no-store' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      json = validar(await res.json());
+      if (window.ORQUESTADOR_PBI) {
+        json = validar(window.ORQUESTADOR_PBI);
+      } else {
+        const res = await fetch(DATA_URL, { cache:'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        json = validar(await res.json());
+      }
     } catch (e) {
       console.info('[Power BI] Sin datos reales (' + DATA_URL + ': ' + e.message + '). Se mantienen los datos simulados.');
       return;

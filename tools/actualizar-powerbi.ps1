@@ -261,6 +261,8 @@ $($filas -join ",`n")
 
 New-Item -ItemType Directory -Force (Split-Path $salida -Parent) | Out-Null
 [System.IO.File]::WriteAllText($salida, $json, (New-Object System.Text.UTF8Encoding($false)))
+# Misma informacion como script: permite abrir index.html directo desde el disco.
+[System.IO.File]::WriteAllText(($salida -replace '\.json$', '-data.js'), "window.ORQUESTADOR_PBI = $json;", (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host ''
 Write-Host "  $($filas.Count) filas | $($empresas.Count) empresas | corte $corte" -ForegroundColor Green
