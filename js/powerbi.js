@@ -400,6 +400,8 @@
     AI.answer = q => {
       const t = q.toLowerCase();
       if (PBI.adh && /adhesiv/.test(t)) return respAdhesivos();
+      if ((PBI.metas || PBI.prod) && /presupuesto|meta|cumplimiento/.test(t)) return respPresupuesto();
+      if (PBI.prod && /producci|m3|m³|planta|capacidad/.test(t)) return respProduccion();
       if (/alerta|atenci[oó]n|riesgo|oportunidad|qu[eé] est[aá] pasando/.test(t)) return respAlertas();
       const soc = PBI.info.find(e => t.includes(e.id) || t.includes(e.nombre.toLowerCase()));
       if (soc) return respSociedad(soc);
@@ -794,6 +796,249 @@
     requestAnimationFrame(() => $$('[data-w]', root).forEach(el => { el.style.width = el.dataset.w + '%'; }));
   }
 
+  /* ======================================================================
+     Producción de Hormigones (m³) y Presupuesto
+     Fuentes: modelo "KPI Diario - Hormigones" (m³ y medida Presupuestad) y
+     tabla de metas comerciales del BSC (Morteros, por planta).
+     ====================================================================== */
+  const m3 = n => UTIL.num(n, 0) + ' m³';
+  const cumple = p => p === null ? '—'
+    : `<span class="badge badge--${p >= 100 ? 'green' : p >= 90 ? 'amber' : 'red'}">${UTIL.num(p, 0)}%</span>`;
+
+  function cabecera(crumb, titulo, sub, pregunta) {
+    return `
+      <div class="mod-head">
+        <div>
+          <div class="crumb">${UTIL.esc(crumb)}</div>
+          <h2 class="mod-title">${UTIL.esc(titulo)}</h2>
+          <p class="mod-sub">${sub}</p>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn--ghost btn--sm" data-nav="home">Volver a Home</button>
+          <button class="btn btn--primary btn--sm" data-ai="${UTIL.esc(pregunta)}">
+            ${UTIL.icon('i-spark', 'ico ico--xs')} Preguntar a Paco AI
+          </button>
+        </div>
+      </div>`;
+  }
+
+  const tarjetasHtml = lista => `
+    <div class="kpi-row" style="grid-template-columns:repeat(${lista.length},minmax(0,1fr))">
+      ${lista.map(t => `
+        <article class="kpi" style="--kpi-accent:#3B82F6">
+          <div class="kpi__label">${UTIL.esc(t.k)}</div>
+          <div class="kpi__value">${t.v}</div>
+          <div class="kpi__meta">${t.d || ''}<span>${UTIL.esc(t.s)}</span></div>
+        </article>`).join('')}
+    </div>`;
+
+  function tablaHtml(titulo, sub, cabeceras, filas) {
+    return `
+      <section class="panel">
+        <header class="panel__head"><div><h2 class="panel__title">${UTIL.esc(titulo)}</h2><p class="panel__sub">${sub}</p></div></header>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr>${cabeceras.map((h, i) => `<th${i ? ' class="num"' : ''}>${UTIL.esc(h)}</th>`).join('')}</tr></thead>
+            <tbody>${filas.map(f => `<tr>${f.map((c, i) => `<td${i ? ' class="num"' : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
+        </div>
+      </section>`;
+  }
+
+  /** Resumen de producción de Hormigones: acumulado, mes en curso y cumplimiento. */
+  function prodDatos() {
+    const H = PBI.prod, c = H.corte, y = +c.slice(0, 4), m = +c.slice(5, 7);
+    const de = (yy, mm) => H.mensual.find(x => x[0] === yy && x[1] === mm) || [yy, mm, 0, 0];
+    const cerrados = []; for (let i = 1; i < m; i++) cerrados.push(i);
+    const sum = (yy, idx) => cerrados.reduce((s, i) => s + de(yy, i)[idx], 0);
+    const mes = de(y, m);
+    const acum = sum(y, 2) + mes[2], acumAnt = sum(y - 1, 2) + (H.mesAnteriorMismosDias || 0);
+    const meses = [];
+    for (let k = 11; k >= 0; k--) {
+      const d = new Date(Date.UTC(y, m - 1 - k, 1)), yy = d.getUTCFullYear(), mm = d.getUTCMonth() + 1, actual = k === 0;
+      const cur = de(yy, mm), ant = actual ? (H.mesAnteriorMismosDias || 0) : de(yy - 1, mm)[2];
+      meses.push({ label:MESES[mm - 1] + ' ' + String(yy).slice(2) + (actual ? '*' : ''), actual, m3:cur[2], pres:cur[3], ant });
+    }
+    return { c, y, m, mes, acum, acumAnt, cerrM3:sum(y, 2), cerrPres:sum(y, 3), meses, hayCerrados:cerrados.length > 0,
+             ultimoCerrado:cerrados.length ? MESES[cerrados[cerrados.length - 1] - 1] : '' };
+  }
+
+  function renderProduccion(root) {
+    const P = prodDatos(), H = PBI.prod;
+    const cumplAcum = P.cerrPres ? pctDe(P.cerrM3, P.cerrPres) : null;
+    const avance = P.mes[3] ? pctDe(P.mes[2], P.mes[3]) : null;
+
+    /* Plantas: meses cerrados del año contra los mismos meses del año anterior. */
+    const plantas = {};
+    H.plantas.forEach(x => {
+      const p = plantas[x[0]] || (plantas[x[0]] = { n:x[0], zona:x[1], cur:0, ant:0, mes:0 });
+      if (x[2] === P.y && x[3] < P.m) p.cur += x[4];
+      if (x[2] === P.y - 1 && x[3] < P.m) p.ant += x[4];
+      if (x[2] === P.y && x[3] === P.m) p.mes = x[4];
+    });
+    const lista = Object.keys(plantas).map(k => plantas[k]).filter(p => p.cur || p.ant || p.mes).sort((a, b) => b.cur - a.cur);
+    const totalCur = lista.reduce((s, p) => s + p.cur, 0);
+
+    root.innerHTML =
+      cabecera('Operaciones', 'Producción · Hormigones',
+        `Metros cúbicos despachados por las plantas de hormigón · Power BI (${UTIL.esc(H.fuente)}) · corte <b>${fechaLarga(P.c)}</b>.`,
+        '¿Cómo va la producción de las plantas?') +
+      tarjetasHtml([
+        { k:'Despachado ' + P.y, v:m3(P.acum), d:delta(varPct(P.acum, P.acumAnt)), s:'vs. mismo período ' + (P.y - 1) },
+        { k:'Cumplimiento presupuesto', v:cumplAcum === null ? '—' : UTIL.num(cumplAcum, 0) + '%',
+          s:P.hayCerrados ? 'Ene – ' + P.ultimoCerrado + ' · ' + m3(P.cerrM3) + ' de ' + m3(P.cerrPres) : 'sin meses cerrados' },
+        { k:MESES[P.m - 1] + ' al día ' + +P.c.slice(8, 10), v:m3(P.mes[2]), d:delta(varPct(P.mes[2], H.mesAnteriorMismosDias || 0)), s:'vs. mismos días ' + (P.y - 1) },
+        { k:'Avance del presupuesto del mes', v:avance === null ? '—' : UTIL.num(avance, 0) + '%', s:'presupuesto ' + m3(P.mes[3]) }
+      ]) +
+      tablaHtml('Despacho mensual contra presupuesto',
+        'Últimos 12 meses · *mes en curso al ' + fechaCorta(P.c) + ': el presupuesto es del mes completo y el año anterior, de los mismos días',
+        ['Mes', 'Despachado', 'Presupuesto', 'Cumplimiento', 'Año anterior', 'Var.'],
+        P.meses.map(x => [x.label, m3(x.m3), x.pres ? m3(x.pres) : '—',
+          x.pres ? cumple(pctDe(x.m3, x.pres)) + (x.actual ? ' <small>avance</small>' : '') : '—',
+          x.ant ? m3(x.ant) : '—', delta(varPct(x.m3, x.ant))])) +
+      tablaHtml('Despacho por planta',
+        P.hayCerrados ? `Ene – ${P.ultimoCerrado} ${P.y} contra los mismos meses de ${P.y - 1}` : 'Mes en curso',
+        ['Planta', 'Zona', 'Acumulado', 'Part.', 'Año anterior', 'Var.', MESES[P.m - 1] + ' en curso'],
+        lista.map(p => [`<span class="co__name">${UTIL.esc(p.n)}</span>`, UTIL.esc(p.zona || ''), m3(p.cur),
+          UTIL.num(pctDe(p.cur, totalCur)) + '%', p.ant ? m3(p.ant) : '—', delta(varPct(p.cur, p.ant)), m3(p.mes)])) +
+      `<section class="panel"><p class="panel__sub">El presupuesto es la medida «${UTIL.esc(H.medidaPresupuesto)}» del modelo y sólo existe para el total
+         de Hormigones, no por planta. La producción de las plantas de Morteros, Adhesivos y Pinturas aún no está conectada.</p></section>`;
+  }
+
+  /** Metas comerciales de Morteros contra la venta real, por planta. */
+  function metasDatos() {
+    const M = PBI.metas, c = M.corte, y = +c.slice(0, 4), m = +c.slice(5, 7);
+    const val = (arr, yy, mm, pl) => arr.filter(x => x[0] === yy && x[1] === mm && (!pl || x[2] === pl)).reduce((s, x) => s + x[3], 0) / 1e6;
+    const conMeta = [...new Set(M.metas.filter(x => x[0] === y && x[3] > 0).map(x => x[2]))].sort();
+    const sinMeta = [...new Set(M.ventas.filter(x => x[0] === y && x[3] > 0).map(x => x[2]))].filter(p => p && conMeta.indexOf(p) < 0);
+    const plantas = conMeta.map(pl => {
+      let v = 0, meta = 0;
+      for (let i = 1; i < m; i++) { v += val(M.ventas, y, i, pl); meta += val(M.metas, y, i, pl); }
+      return { n:pl, v, meta, mesV:val(M.ventas, y, m, pl), mesMeta:val(M.metas, y, m, pl) };
+    });
+    const meses = [];
+    for (let i = 1; i <= m; i++) {
+      const v = conMeta.reduce((s, pl) => s + val(M.ventas, y, i, pl), 0), meta = conMeta.reduce((s, pl) => s + val(M.metas, y, i, pl), 0);
+      meses.push({ label:MESES[i - 1] + (i === m ? '*' : ''), actual:i === m, v, meta });
+    }
+    const tot = plantas.reduce((s, p) => ({ v:s.v + p.v, meta:s.meta + p.meta }), { v:0, meta:0 });
+    return { c, y, m, plantas, meses, tot, sinMeta, hayCerrados:m > 1, ultimoCerrado:m > 1 ? MESES[m - 2] : '' };
+  }
+
+  function renderPresupuesto(root) {
+    let html = cabecera('Finanzas', 'Presupuesto',
+      'Cumplimiento contra las metas y presupuestos que existen hoy en Power BI · millones de CLP y m³.',
+      '¿Cómo vamos contra el presupuesto?');
+
+    if (PBI.metas) {
+      const D = metasDatos(), cum = D.tot.meta ? pctDe(D.tot.v, D.tot.meta) : null;
+      html += tarjetasHtml([
+        { k:'Morteros TX · cumplimiento de metas', v:cum === null ? '—' : UTIL.num(cum, 0) + '%',
+          s:D.hayCerrados ? 'Ene – ' + D.ultimoCerrado + ' ' + D.y : 'sin meses cerrados' },
+        { k:'Venta de las plantas con meta', v:`<span class="money">${UTIL.musd(D.tot.v)}</span>`, s:'meta ' + UTIL.musd(D.tot.meta) },
+        { k:'Diferencia contra la meta', v:`<span class="money">${UTIL.musd(D.tot.v - D.tot.meta)}</span>`, s:'acumulado de meses cerrados' }
+      ]) +
+      tablaHtml('Morteros TX · venta contra meta por planta',
+        (D.hayCerrados ? `Ene – ${D.ultimoCerrado} ${D.y}` : '') + ' · metas comerciales del BSC · corte ' + fechaLarga(D.c),
+        ['Planta', 'Venta', 'Meta', 'Cumplimiento', 'Diferencia', MESES[D.m - 1] + ' en curso', 'Meta del mes', 'Avance'],
+        D.plantas.map(p => [`<span class="co__name">${UTIL.esc(p.n)}</span>`, UTIL.musd(p.v), UTIL.musd(p.meta),
+          cumple(p.meta ? pctDe(p.v, p.meta) : null), UTIL.musd(p.v - p.meta), UTIL.musd(p.mesV), UTIL.musd(p.mesMeta),
+          cumple(p.mesMeta ? pctDe(p.mesV, p.mesMeta) : null)])) +
+      tablaHtml('Morteros TX · venta contra meta por mes',
+        'Suma de las plantas con meta · *mes en curso: la meta es del mes completo',
+        ['Mes', 'Venta', 'Meta', 'Cumplimiento', 'Diferencia'],
+        D.meses.map(x => [x.label, UTIL.musd(x.v), UTIL.musd(x.meta),
+          cumple(x.meta ? pctDe(x.v, x.meta) : null) + (x.actual ? ' <small>avance</small>' : ''), UTIL.musd(x.v - x.meta)])) +
+      `<section class="panel"><p class="panel__sub">Las metas vienen de la tabla de metas comerciales del BSC (suma de todos los ejecutivos,
+         activos e inactivos). ${D.sinMeta.length ? 'Sin meta cargada: <b>' + D.sinMeta.map(UTIL.esc).join(', ') + '</b>. ' : ''}
+         Falta confirmar que estas metas son el presupuesto oficial de la sociedad.</p></section>`;
+    }
+
+    if (PBI.prod) {
+      const P = prodDatos();
+      html += tablaHtml('Hormigones TX · despacho contra presupuesto (m³)',
+        'Presupuesto en volumen del modelo KPI Diario - Hormigones · *mes en curso: avance sobre el presupuesto del mes completo',
+        ['Mes', 'Despachado', 'Presupuesto', 'Cumplimiento'],
+        P.meses.map(x => [x.label, m3(x.m3), x.pres ? m3(x.pres) : '—',
+          x.pres ? cumple(pctDe(x.m3, x.pres)) + (x.actual ? ' <small>avance</small>' : '') : '—']));
+    }
+
+    html += `<section class="panel"><p class="panel__sub"><b>Sin presupuesto en Power BI:</b> Hormigones TX en pesos, Cementos TX, Minera TX,
+      Distribuidora TX y el consolidado del grupo. Para completarlo hace falta la fuente oficial del presupuesto.</p></section>`;
+    root.innerHTML = html;
+  }
+
+  function respProduccion() {
+    const P = prodDatos(), cum = P.cerrPres ? pctDe(P.cerrM3, P.cerrPres) : null;
+    return `Hormigones lleva <b>${m3(P.acum)}</b> despachados en ${P.y}` +
+      (varPct(P.acum, P.acumAnt) === null ? '.' : ` (<b>${UTIL.pct(varPct(P.acum, P.acumAnt), 1, true)}</b> contra el mismo período del año anterior).`) +
+      (cum === null ? '' : kv('Cumplimiento del presupuesto, Ene – ' + P.ultimoCerrado, UTIL.num(cum, 0) + '%')) +
+      kv(MESES[P.m - 1] + ' al día ' + +P.c.slice(8, 10), m3(P.mes[2]) + ' de ' + m3(P.mes[3]) + ' presupuestados') +
+      'Sólo tengo producción de las plantas de hormigón; la de Morteros, Adhesivos y Pinturas aún no está conectada.' +
+      `<br><small>Fuente: Power BI · ${UTIL.esc(PBI.prod.fuente)} · corte ${fechaLarga(P.c)}.</small>`;
+  }
+
+  function respPresupuesto() {
+    let t = '';
+    if (PBI.metas) {
+      const D = metasDatos();
+      t += `<b>Morteros TX</b> cumple <b>${UTIL.num(pctDe(D.tot.v, D.tot.meta), 0)}%</b> de sus metas comerciales (Ene – ${D.ultimoCerrado}).` +
+        D.plantas.map(p => kv(p.n, UTIL.num(pctDe(p.v, p.meta), 0) + '% · ' + UTIL.musd(p.v) + ' de ' + UTIL.musd(p.meta))).join('');
+    }
+    if (PBI.prod) {
+      const P = prodDatos();
+      if (P.cerrPres) t += `<b>Hormigones TX</b> cumple <b>${UTIL.num(pctDe(P.cerrM3, P.cerrPres), 0)}%</b> de su presupuesto en volumen (${m3(P.cerrM3)} de ${m3(P.cerrPres)}).<br>`;
+    }
+    return t + 'No hay presupuesto en Power BI para Hormigones en pesos, Cementos, Minera, Distribuidora ni para el consolidado.' +
+      '<br><small>Fuente: Power BI · metas comerciales del BSC y KPI Diario - Hormigones.</small>';
+  }
+
+  /* ======================================================================
+     Tareas · pendientes reales de datos e integración (Personal → Tareas)
+     ====================================================================== */
+  function tareasReales() {
+    const t = [];
+    const add = (title, description, priority) =>
+      t.push({ title, description, owner:DATA.user.name, due:'Pendiente', priority, status:'Abierta' });
+
+    PBI.info.filter(e => !e.alDia).forEach(e => add(
+      `Regularizar los datos de ${e.nombre} en Power BI`,
+      `El modelo no registra despachos de ${e.nombre} desde el ${fechaLarga(e.ultima)}. Confirmar con quien mantiene el modelo ` +
+      'si la operación pasó a otra sociedad o sistema y dejar la fuente al día.', 'Alta'));
+
+    PBI.info.forEach(e => ((PBI.soc[e.nombre] || {}).desglose || []).forEach(d => {
+      if (d[1] >= 500e6 && (d[1] - d[2]) / d[1] >= 0.95) add(
+        `Cargar el costo de ${d[0]} en ${e.nombre}`,
+        `${d[0]} registra ${UTIL.musd(d[1] / 1e6)} de venta este año con sólo ${UTIL.musd(d[2] / 1e6)} de costo en el modelo. ` +
+        `Mientras no se cargue, el margen de ${e.nombre} aparece inflado.`, 'Alta');
+    }));
+
+    if (PBI.metas) add('Confirmar y completar el presupuesto',
+      'Están conectadas las metas comerciales de Morteros (BSC) y el presupuesto en m³ de Hormigones. Falta confirmar que esas metas son el ' +
+      'presupuesto oficial y obtener el de Hormigones en pesos, Cementos, Minera, Distribuidora y el consolidado.', 'Media');
+    else add('Conectar presupuesto al Orquestador',
+      'No hay presupuesto cargado. Falta definir la fuente oficial y conectarla.', 'Media');
+
+    if (PBI.prod) add('Conectar la producción de Morteros, Adhesivos y Pinturas',
+      'Está conectado el despacho en m³ de las plantas de hormigón. Falta la producción de las demás plantas.', 'Media');
+    else add('Conectar producción al Orquestador',
+      'No hay datos de producción cargados. Falta definir la fuente y conectarla.', 'Media');
+
+    add('Conectar cuentas por cobrar al Orquestador',
+      'En Power BI sólo hay cartera de la Comercializadora, con facturas hasta julio de 2026. Falta la fuente de la cartera de clientes del grupo.', 'Media');
+    add('Conectar caja al Orquestador',
+      'No hay ningún modelo de Power BI con saldos de caja o bancos. Tiene que venir de tesorería u otra fuente.', 'Media');
+    return t;
+  }
+
+  function aplicarTareas() {
+    DATA.tasks = tareasReales();
+    const altas = DATA.tasks.filter(x => x.priority === 'Alta').length;
+    const p = (DATA.personal || []).find(x => x.goto === 'tareas');
+    if (p) { p.n = String(DATA.tasks.length); p.s = altas + ' de prioridad alta'; }
+    UI.renderPersonal();
+  }
+
   /** Reemplaza el grupo "Empresas" del menú por las sociedades reales del modelo. */
   function navegacionSociedades() {
     const ytd = rango('ytd');
@@ -875,6 +1120,12 @@
     navegacionSociedades();
     if (PBI.adh) UI.moduleRenderers.adhesivos = renderAdhesivos;
 
+    const p = json.produccionHormigones, mt = json.metasMorteros;
+    PBI.prod  = p && Array.isArray(p.mensual) && p.mensual.length && p.corte ? p : null;
+    PBI.metas = mt && Array.isArray(mt.metas) && mt.metas.length && mt.corte ? mt : null;
+    if (PBI.prod) { UI.moduleRenderers.produccion = renderProduccion; UI.moduleRenderers['produccion-g'] = renderProduccion; }
+    if (PBI.prod || PBI.metas) UI.moduleRenderers.presupuesto = renderPresupuesto;
+
     DATA.real     = true;
     DATA.moneda   = 'CLP';
     DATA.terms    = { ebitda:'Margen bruto', margen:'Margen bruto %', presupuesto:'Año anterior',
@@ -893,6 +1144,7 @@
     UI.renderAll = () => { aplicar(); renderAll(); };
 
     rotular();
+    aplicarTareas();
     UI.renderBriefing();
     UI.renderNotifications();
     UI.renderAll();

@@ -852,7 +852,7 @@ const UI = {
           <header class="panel__head">
             <div>
               <h2 class="panel__title">Alertas y tareas abiertas</h2>
-              <p class="panel__sub">${DATA.tasks.length} tarea pendiente</p>
+              <p class="panel__sub">${DATA.tasks.length} ${DATA.tasks.length === 1 ? 'tarea pendiente' : 'tareas pendientes'}</p>
             </div>
           </header>
           <div style="display:grid;gap:10px;padding:16px">
@@ -860,13 +860,13 @@ const UI = {
               <article style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel)">
                 <div>
                   <div style="font-weight:700;margin-bottom:6px">${UTIL.esc(task.title)}</div>
-                  <div style="color:var(--muted);line-height:1.5">${UTIL.esc(task.description)}</div>
-                  <div style="margin-top:10px;color:var(--muted);font-size:12px">
+                  <div style="color:var(--text-2);line-height:1.5">${UTIL.esc(task.description)}</div>
+                  <div style="margin-top:10px;color:var(--text-2);font-size:12px">
                     Responsable: ${UTIL.esc(task.owner)} · Vence: ${UTIL.esc(task.due)}
                   </div>
                 </div>
                 <div style="display:flex;align-items:flex-start;gap:8px">
-                  <span class="badge badge--amber">${UTIL.esc(task.priority)}</span>
+                  <span class="badge badge--${task.priority === 'Alta' ? 'red' : 'amber'}">${UTIL.esc(task.priority)}</span>
                   <span class="badge badge--amber">${UTIL.esc(task.status)}</span>
                 </div>
               </article>`).join('')}

@@ -110,6 +110,9 @@ simulados.
 | KPIs, gráfico de 12 meses, ventas por sociedad, semáforo | Medidas `Despachado Total Corporativo`, `Costo Total Corporativo` y `Proyeccion de Despacho Corporativo` |
 | Empresas → cada sociedad (y Grupo TX → Hormigones / Morteros) | Resumen, evolución mensual, desglose por planta, segmento o familia y 15 principales clientes |
 | Grupo TX → Adhesivos | Venta y margen de Planta Adhesivos (Morteros TX), por mes y por familia de producto |
+| Operaciones → Producción | m³ despachados por las plantas de hormigón contra presupuesto (modelo *KPI Diario - Hormigones*) |
+| Finanzas → Presupuesto | Venta de Morteros contra las metas comerciales del *BSC*, por planta y por mes; Hormigones en m³ |
+| Personal → Tareas | Pendientes de datos calculados: fuentes atrasadas, costos sin cargar y bloques por conectar |
 | Alertas, resumen ejecutivo, notificaciones | Calculados sobre esas cifras |
 | Paco AI: ventas, margen y sociedades | Calculado sobre esas cifras; el resto de sus respuestas se rotula como demostración |
 | Agenda, mapa, proyectos, patrimonio, personal | Siguen simulados y se rotulan **Simulado** |

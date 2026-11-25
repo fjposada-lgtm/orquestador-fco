@@ -20,6 +20,11 @@ param(
     [string]$GroupId   = 'deadc7a6-7fa8-4353-9b1f-5779f31f59d4',   # Área de trabajo: Gerencia
     [string]$DatasetId = '67b33b13-a85a-4a11-bb6d-9c6d00ddc75b',   # Reporte_de_Ventas_Corporativo_TX
     [int]$DesdeAnio    = 2024,
+    # Modelo "KPI Diario - Hormigones" (área Operaciones Hormigones): m3 despachados y presupuesto
+    [string]$HormGroupId   = '76092670-a127-46c2-8754-78eb70b27b49',
+    [string]$HormDatasetId = '679a08de-472f-41d6-b761-efef5b9db225',
+    # Modelo "BSC" (área Gerencia): metas comerciales de Morteros por planta
+    [string]$BscDatasetId  = '60e4df57-b921-422a-ace0-9bc326edc3ff',
     [string]$TokenFile = ''                                        # opcional: JSON con access_token ya emitido
 )
 
@@ -55,10 +60,10 @@ if ($TokenFile) {
 }
 
 # --- 2. Consulta DAX de lectura ---------------------------------------------
-function Consultar([string]$dax) {
+function Consultar([string]$dax, [string]$grupo = $GroupId, [string]$modelo = $DatasetId) {
     $body  = @{ queries = @(@{ query = $dax }); serializerSettings = @{ includeNulls = $true } } | ConvertTo-Json -Depth 5
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-    $uri   = "https://api.powerbi.com/v1.0/myorg/groups/$GroupId/datasets/$DatasetId/executeQueries"
+    $uri   = "https://api.powerbi.com/v1.0/myorg/groups/$grupo/datasets/$modelo/executeQueries"
     $w     = Invoke-WebRequest -UseBasicParsing -Method Post -Uri $uri -Headers @{ Authorization = "Bearer $token" } `
                 -ContentType 'application/json; charset=utf-8' -Body $bytes
     # Windows PowerShell 5.1 asume Latin-1 si la respuesta no declara charset.
@@ -220,7 +225,75 @@ foreach ($e in $empresas) {
     $socTxt.Add('"' + (Txt $e) + '": { "corte": "' + $u + '", "dimension": "' + $dimNombre + '", "desglose": [' + $desTxt + '], "clientes": [' + $cliTxt + '] }')
 }
 
-# --- 7. Escritura -------------------------------------------------------------
+# --- 7. Produccion de Hormigones: m3 despachados contra presupuesto ------------
+# Otro modelo. Si la cuenta no tiene acceso, el bloque queda vacio y el resto sigue.
+$prodTxt = 'null'
+try {
+    Write-Host '  Leyendo produccion de Hormigones ...' -ForegroundColor DarkGray
+    $anioIni = $anioFin - 1
+    $pc = Consultar 'EVALUATE ROW("f", MAX(HT_DESPACHO[Fecha]))' $HormGroupId $HormDatasetId
+    $prodCorte = ([datetime]$pc[0].'[f]').ToString('yyyy-MM-dd')
+    $rows = Consultar @"
+EVALUATE
+FILTER(
+  SUMMARIZECOLUMNS(
+    Dias_Laborales[$col], Dias_Laborales[Mes],
+    FILTER(ALL(Dias_Laborales[$col]), Dias_Laborales[$col] >= $anioIni && Dias_Laborales[$col] <= $anioFin),
+    "m3", SUM(HT_DESPACHO[Cantidad]), "pres", [Presupuestad]
+  ), NOT ISBLANK([m3]))
+"@ $HormGroupId $HormDatasetId
+    $pm = @($rows | ForEach-Object { '[' + [int]$_."Dias_Laborales[$col]" + ',' + [int]$_.'Dias_Laborales[Mes]' + ',' + (Num $_.'[m3]') + ',' + (Num $_.'[pres]') + ']' }) -join ','
+    $rows = Consultar @"
+EVALUATE
+FILTER(
+  SUMMARIZECOLUMNS(
+    'Pta Salida'[PLANTA], 'Pta Salida'[ZONA], Dias_Laborales[$col], Dias_Laborales[Mes],
+    FILTER(ALL(Dias_Laborales[$col]), Dias_Laborales[$col] >= $anioIni && Dias_Laborales[$col] <= $anioFin),
+    "m3", SUM(HT_DESPACHO[Cantidad])
+  ), NOT ISBLANK([m3]))
+"@ $HormGroupId $HormDatasetId
+    $pp = @($rows | ForEach-Object { '["' + (Txt $_.'Pta Salida[PLANTA]') + '","' + (Txt $_.'Pta Salida[ZONA]') + '",' + [int]$_."Dias_Laborales[$col]" + ',' + [int]$_.'Dias_Laborales[Mes]' + ',' + (Num $_.'[m3]') + ']' }) -join ','
+    # Mismo mes del anio anterior hasta el mismo dia, para comparar el mes en curso
+    $py = [int]$prodCorte.Substring(0, 4); $pmm = [int]$prodCorte.Substring(5, 2); $pd = [int]$prodCorte.Substring(8, 2)
+    $pdPrev = [Math]::Min($pd, [datetime]::DaysInMonth($py - 1, $pmm))
+    $ma = Consultar "EVALUATE ROW(`"m3`", CALCULATE(SUM(HT_DESPACHO[Cantidad]), Dias_Laborales[Fecha] >= DATE($($py - 1), $pmm, 1), Dias_Laborales[Fecha] <= DATE($($py - 1), $pmm, $pdPrev)))" $HormGroupId $HormDatasetId
+    $prodTxt = '{ "fuente": "KPI Diario - Hormigones", "corte": "' + $prodCorte + '", "unidad": "m3", "medidaPresupuesto": "Presupuestad", ' +
+               '"mesAnteriorMismosDias": ' + (Num $ma[0].'[m3]') + ', "columnasMensual": ["anio","mes","m3","presupuesto"], "mensual": [' + $pm + '], ' +
+               '"columnasPlantas": ["planta","zona","anio","mes","m3"], "plantas": [' + $pp + '] }'
+} catch { Write-Host "  (sin produccion de Hormigones: $($_.Exception.Message))" -ForegroundColor DarkYellow }
+
+# --- 8. Metas comerciales de Morteros por planta (BSC) contra la venta real ---
+$metasTxt = 'null'
+try {
+    Write-Host '  Leyendo metas de Morteros ...' -ForegroundColor DarkGray
+    $anioIni = $anioFin - 1
+    $rows = Consultar @"
+EVALUATE
+SUMMARIZECOLUMNS(
+  Manual_TH_Metas[$col], Manual_TH_Metas[Mes], Manual_TH_Metas[Planta],
+  FILTER(ALL(Manual_TH_Metas[$col]), Manual_TH_Metas[$col] >= $anioIni && Manual_TH_Metas[$col] <= $anioFin),
+  "meta", SUM(Manual_TH_Metas[Meta])
+)
+"@ $GroupId $BscDatasetId
+    $mm = @($rows | Where-Object { $null -ne $_.'[meta]' } | ForEach-Object { '[' + [int]$_."Manual_TH_Metas[$col]" + ',' + [int]$_.'Manual_TH_Metas[Mes]' + ',"' + (Txt $_.'Manual_TH_Metas[Planta]') + '",' + (Num $_.'[meta]') + ']' }) -join ','
+    # Venta real por planta y mes, del modelo corporativo
+    $rows = Consultar @"
+EVALUATE
+FILTER(
+  SUMMARIZECOLUMNS(
+    Dias_Laborales[$col], Dias_Laborales[Mes], Guias_de_Despacho_SAP_GTX[Planta.1],
+    FILTER(ALL(Dias_Laborales[$col]), Dias_Laborales[$col] >= $anioIni && Dias_Laborales[$col] <= $anioFin),
+    TREATAS({"Morteros TX"}, Empresas[Empresa]),
+    "v", [Despachado Total Corporativo]
+  ), NOT ISBLANK([v]))
+"@
+    $mv = @($rows | ForEach-Object { '[' + [int]$_."Dias_Laborales[$col]" + ',' + [int]$_.'Dias_Laborales[Mes]' + ',"' + (Txt $_.'Guias_de_Despacho_SAP_GTX[Planta.1]') + '",' + (Num $_.'[v]') + ']' }) -join ','
+    $metasTxt = '{ "fuente": "BSC - Manual_TH_Metas", "corte": "' + [string]$ultima['Morteros TX'] + '", ' +
+                '"columnasMetas": ["anio","mes","planta","meta"], "metas": [' + $mm + '], ' +
+                '"columnasVentas": ["anio","mes","planta","venta"], "ventas": [' + $mv + '] }'
+} catch { Write-Host "  (sin metas de Morteros: $($_.Exception.Message))" -ForegroundColor DarkYellow }
+
+# --- 9. Escritura -------------------------------------------------------------
 $empTxt =@($empresas | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ','
 $json = @"
 {
@@ -245,6 +318,8 @@ $json = @"
   "sociedades": {
     $($socTxt -join ",`n    ")
   },
+  "produccionHormigones": $prodTxt,
+  "metasMorteros": $metasTxt,
   "adhesivos": {
     "definicion": "Morteros TX, despachos con Planta.1 = Planta Adhesivos",
     "corte": "$adhCorte",
