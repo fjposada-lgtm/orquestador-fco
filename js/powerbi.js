@@ -34,7 +34,7 @@
   const VERDE = '#19C37D', AMBAR = '#FFB020', ROJO = '#FF5A67', AZUL = '#3B82F6';
   const DIAS_DESFASE = 7;     // una sociedad sin datos hace más de 7 días se considera desactualizada
 
-  const PBI = { meta:null, empresas:[], filas:[], proy:{}, corte:'', info:[], cache:new Map() };
+  const PBI = { meta:null, empresas:[], filas:[], proy:{}, corte:'', info:[], adh:null, cache:new Map() };
 
   /* ======================================================================
      Fechas · se manejan como texto ISO (AAAA-MM-DD), comparable con < y >
@@ -304,6 +304,9 @@
            'La suma de las sociedades no equivale a la venta a terceros.',
       impact:'Venta entre relacionadas', value:UTIL.musd(todo.r) });
 
+    const adh = PBI.adh ? alertaAdhesivos() : null;
+    if (adh) out.push(adh);
+
     const orden = { alta:0, media:1, oportunidad:2 };
     return out.sort((a, b) => orden[a.prio] - orden[b.prio]);
   }
@@ -396,6 +399,7 @@
     const simulada = AI.answer;
     AI.answer = q => {
       const t = q.toLowerCase();
+      if (PBI.adh && /adhesiv/.test(t)) return respAdhesivos();
       if (/alerta|atenci[oó]n|riesgo|oportunidad|qu[eé] est[aá] pasando/.test(t)) return respAlertas();
       const soc = PBI.info.find(e => t.includes(e.id) || t.includes(e.nombre.toLowerCase()));
       if (soc) return respSociedad(soc);
@@ -469,6 +473,345 @@
   }
 
   /* ======================================================================
+     Línea Adhesivos · módulo Grupo TX → Adhesivos
+     Alcance: despachos de Morteros TX cuya planta es "Planta Adhesivos".
+     ====================================================================== */
+  function sumaAdh(desde, hasta) {
+    let v = 0, c = 0;
+    for (const f of PBI.adh.filas) {
+      if (f[0] < desde || f[0] > hasta) continue;
+      v += f[1]; c += f[2];
+    }
+    return { v:v / 1e6, c:c / 1e6, mb:(v - c) / 1e6, mg:v ? ((v - c) / v) * 100 : 0 };
+  }
+
+  const pts = d => `<span class="kpi__delta ${UTIL.dir(d)}">${d > 0 ? '+' : d < 0 ? '−' : ''}${UTIL.num(Math.abs(d))} pts</span>`;
+
+  function adhDatos() {
+    const c = PBI.adh.corte, y = +c.slice(0, 4), m = +c.slice(5, 7);
+    const cAnt = masAnios(c, -1);
+    const acum = sumaAdh(iniMes(y, 1), c), acumAnt = sumaAdh(iniMes(y - 1, 1), cAnt);
+    const mes  = sumaAdh(iniMes(y, m), c), mesAnt  = sumaAdh(iniMes(y - 1, m), cAnt);
+
+    const meses = [];
+    for (let k = 11; k >= 0; k--) {
+      const d = new Date(Date.UTC(y, m - 1 - k, 1));
+      const yy = d.getUTCFullYear(), mm = d.getUTCMonth() + 1, actual = k === 0;
+      const hasta = actual ? c : finMes(yy, mm);
+      meses.push({ label:MESES[mm - 1] + ' ' + String(yy).slice(2) + (actual ? '*' : ''),
+                   cur:sumaAdh(iniMes(yy, mm), hasta),
+                   ant:sumaAdh(iniMes(yy - 1, mm), actual ? masAnios(hasta, -1) : finMes(yy - 1, mm)) });
+    }
+
+    const familias = PBI.adh.grupos.map(g => {
+      const v = g[1] / 1e6, mb = (g[1] - g[2]) / 1e6, vp = g[3] / 1e6, mbp = (g[3] - g[4]) / 1e6;
+      return { n:g[0] || '(sin familia)', v, mb, vp, mbp,
+               mg:v ? (mb / v) * 100 : null, mgp:vp ? (mbp / vp) * 100 : null };
+    }).sort((a, b) => b.v - a.v);
+
+    return { c, y, m, acum, acumAnt, mes, mesAnt, meses, familias };
+  }
+
+  function renderAdhesivos(root) {
+    const A = adhDatos();
+    const dMg = A.acum.mg - A.acumAnt.mg;
+    const dV = varPct(A.acum.v, A.acumAnt.v), dMb = varPct(A.acum.mb, A.acumAnt.mb), dMes = varPct(A.mes.v, A.mesAnt.v);
+    const maxV = Math.max.apply(null, A.meses.map(x => x.cur.v).concat([1]));
+
+    const tarjetas = [
+      { k:'Venta acumulada ' + A.y, v:UTIL.musd(A.acum.v), d:`<span class="kpi__delta ${UTIL.dir(dV || 0)}">${UTIL.pct(dV || 0)}</span>`, s:'vs. mismo período ' + (A.y - 1) },
+      { k:'Margen bruto', v:UTIL.musd(A.acum.mb), d:`<span class="kpi__delta ${UTIL.dir(dMb || 0)}">${UTIL.pct(dMb || 0)}</span>`, s:'vs. mismo período ' + (A.y - 1) },
+      { k:'Margen % acumulado', v:UTIL.num(A.acum.mg) + '%', d:pts(dMg), s:'era ' + UTIL.num(A.acumAnt.mg) + '% en ' + (A.y - 1) },
+      { k:'Venta ' + MESES[A.m - 1] + ' al día ' + +A.c.slice(8, 10), v:UTIL.musd(A.mes.v),
+        d:`<span class="kpi__delta ${UTIL.dir(dMes || 0)}">${UTIL.pct(dMes || 0)}</span>`, s:'margen ' + UTIL.num(A.mes.mg) + '%' }
+    ];
+
+    const top = A.familias.slice(0, 14), resto = A.familias.slice(14);
+    const filaFam = f => `
+      <tr>
+        <td><span class="co__name">${UTIL.esc(f.n)}</span></td>
+        <td class="num money">${UTIL.musd(f.v)}</td>
+        <td class="num">${UTIL.num(pctDe(f.v, A.acum.v))}%</td>
+        <td class="num">${f.mg === null ? '—' : UTIL.num(f.mg) + '%'}</td>
+        <td class="num">${f.mgp === null ? '—' : UTIL.num(f.mgp) + '%'}</td>
+        <td class="num">${f.mg === null || f.mgp === null ? '—' : pts(f.mg - f.mgp)}</td>
+        <td class="num money"><span class="kpi__delta ${UTIL.dir(f.mb - f.mbp)}">${UTIL.musd(f.mb - f.mbp)}</span></td>
+      </tr>`;
+    const otros = resto.length ? (() => {
+      const s = resto.reduce((a, f) => ({ v:a.v + f.v, mb:a.mb + f.mb, vp:a.vp + f.vp, mbp:a.mbp + f.mbp }), { v:0, mb:0, vp:0, mbp:0 });
+      return filaFam({ n:'Otras ' + resto.length + ' familias', v:s.v, mb:s.mb, vp:s.vp, mbp:s.mbp,
+                       mg:s.v ? (s.mb / s.v) * 100 : null, mgp:s.vp ? (s.mbp / s.vp) * 100 : null });
+    })() : '';
+
+    root.innerHTML = `
+      <div class="mod-head">
+        <div>
+          <div class="crumb">Grupo TX</div>
+          <h2 class="mod-title">Adhesivos</h2>
+          <p class="mod-sub">Venta y margen bruto de <b>Planta Adhesivos</b> (Morteros TX) ·
+             Power BI · corte <b>${fechaLarga(A.c)}</b> · millones de CLP.</p>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn--ghost btn--sm" data-nav="home">Volver a Home</button>
+          <button class="btn btn--primary btn--sm" data-ai="¿Cómo está el margen de adhesivos?">
+            ${UTIL.icon('i-spark', 'ico ico--xs')} Preguntar a Paco AI
+          </button>
+        </div>
+      </div>
+
+      <div class="kpi-row" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        ${tarjetas.map(t => `
+          <article class="kpi" style="--kpi-accent:#3B82F6">
+            <div class="kpi__label">${UTIL.esc(t.k)}</div>
+            <div class="kpi__value"><span class="money">${t.v}</span></div>
+            <div class="kpi__meta">${t.d}<span>${UTIL.esc(t.s)}</span></div>
+          </article>`).join('')}
+      </div>
+
+      <section class="panel">
+        <header class="panel__head">
+          <div>
+            <h2 class="panel__title">Margen mensual</h2>
+            <p class="panel__sub">Últimos 12 meses contra el mismo mes del año anterior · *mes en curso al ${fechaCorta(A.c)}, comparado con los mismos días</p>
+          </div>
+        </header>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr>
+              <th>Mes</th><th class="num">Venta</th><th style="width:22%"></th><th class="num">Margen bruto</th>
+              <th class="num">Margen %</th><th class="num">Año anterior</th><th class="num">Diferencia</th>
+            </tr></thead>
+            <tbody>
+              ${A.meses.map(x => `
+                <tr>
+                  <td>${x.label}</td>
+                  <td class="num money">${UTIL.musd(x.cur.v)}</td>
+                  <td><div class="biz__track"><i class="biz__fill" style="background:#3B82F6" data-w="${(x.cur.v / maxV) * 100}"></i></div></td>
+                  <td class="num money">${UTIL.musd(x.cur.mb)}</td>
+                  <td class="num">${x.cur.v ? UTIL.num(x.cur.mg) + '%' : '—'}</td>
+                  <td class="num">${x.ant.v ? UTIL.num(x.ant.mg) + '%' : '—'}</td>
+                  <td class="num">${x.cur.v && x.ant.v ? pts(x.cur.mg - x.ant.mg) : '—'}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head">
+          <div>
+            <h2 class="panel__title">Margen por familia de producto</h2>
+            <p class="panel__sub">Acumulado ${A.y} al ${fechaCorta(A.c)} contra los mismos días de ${A.y - 1} · ordenado por venta</p>
+          </div>
+        </header>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr>
+              <th>Familia</th><th class="num">Venta</th><th class="num">Part.</th><th class="num">Margen %</th>
+              <th class="num">Margen % ${A.y - 1}</th><th class="num">Diferencia</th><th class="num">Var. margen $</th>
+            </tr></thead>
+            <tbody>${top.map(filaFam).join('')}${otros}</tbody>
+          </table>
+        </div>
+        <p class="panel__sub" style="margin-top:12px">Margen bruto = venta menos costo directo, según las medidas del modelo; no es EBITDA.
+           Alcance: ${UTIL.esc(PBI.adh.definicion || '')}. Los adhesivos cerámicos y pegamentos en polvo se fabrican en Planta Morteros
+           y no están incluidos aquí.</p>
+      </section>`;
+
+    requestAnimationFrame(() => $$('[data-w]', root).forEach(el => { el.style.width = el.dataset.w + '%'; }));
+  }
+
+  function respAdhesivos() {
+    const A = adhDatos(), dMg = A.acum.mg - A.acumAnt.mg;
+    const peores = A.familias.filter(f => f.mg !== null && f.mgp !== null)
+      .sort((a, b) => (a.mb - a.mbp) - (b.mb - b.mbp)).slice(0, 3);
+    return `El margen bruto de <b>Planta Adhesivos</b> acumulado a ${fechaCorta(A.c)} es <b>${UTIL.num(A.acum.mg)}%</b>, ` +
+      `contra <b>${UTIL.num(A.acumAnt.mg)}%</b> en el mismo período del año anterior (${dMg >= 0 ? '+' : '−'}${UTIL.num(Math.abs(dMg))} puntos).` +
+      kv('Venta acumulada', UTIL.musd(A.acum.v)) + kv('Margen bruto', UTIL.musd(A.acum.mb)) +
+      kv('Margen del mes', UTIL.num(A.mes.mg) + '%') +
+      'Familias que más margen restan contra el año anterior:' +
+      peores.map(f => kv(f.n, UTIL.num(f.mgp) + '% → ' + UTIL.num(f.mg) + '% · ' + UTIL.musd(f.mb - f.mbp))).join('') + pie();
+  }
+
+  function alertaAdhesivos() {
+    const A = adhDatos(), dMg = A.acum.mg - A.acumAnt.mg;
+    if (!A.acumAnt.v || dMg > -2) return null;
+    const peor = A.familias.filter(f => f.mg !== null && f.mgp !== null)
+      .sort((a, b) => (a.mb - a.mbp) - (b.mb - b.mbp))[0];
+    return { prio:'alta', company:'Planta Adhesivos', time:'corte ' + fechaCorta(A.c),
+      text:`El margen bruto de Planta Adhesivos baja de ${UTIL.num(A.acumAnt.mg)}% a ${UTIL.num(A.acum.mg)}% en el acumulado.` +
+           (peor ? ` La mayor pérdida está en ${peor.n} (${UTIL.num(peor.mgp)}% → ${UTIL.num(peor.mg)}%).` : ''),
+      impact:'Margen bruto vs. año anterior', value:UTIL.musd(A.acum.mb - A.acumAnt.mb) };
+  }
+
+  /* ======================================================================
+     Módulo por sociedad · Empresas → <sociedad>
+     Cada sociedad se muestra hasta SU última fecha con venta en el modelo,
+     comparada contra los mismos días del año anterior.
+     ====================================================================== */
+  const delta = d => d === null ? '—' : `<span class="kpi__delta ${UTIL.dir(d)}">${UTIL.pct(d)}</span>`;
+
+  /** Tabla de detalle a partir de filas [nombre, venta, costo, ventaAnt, costoAnt] en pesos. */
+  function tablaDetalle(titulo, sub, columna, filas, totalVenta, maximo) {
+    if (!filas || !filas.length) return '';
+    const orden = filas.map(g => {
+      const v = g[1] / 1e6, mb = (g[1] - g[2]) / 1e6, vp = g[3] / 1e6, mbp = (g[3] - g[4]) / 1e6;
+      return { n:g[0] || '(sin clasificar)', v, vp, mg:v ? (mb / v) * 100 : null, mgp:vp ? (mbp / vp) * 100 : null };
+    }).filter(f => f.v > 0 || f.vp > 0).sort((a, b) => b.v - a.v).slice(0, maximo || 20);
+
+    return `
+      <section class="panel">
+        <header class="panel__head">
+          <div><h2 class="panel__title">${UTIL.esc(titulo)}</h2><p class="panel__sub">${sub}</p></div>
+        </header>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr>
+              <th>${UTIL.esc(columna)}</th><th class="num">Venta</th><th class="num">Part.</th>
+              <th class="num">Año anterior</th><th class="num">Var.</th>
+              <th class="num">Margen %</th><th class="num">Margen % ant.</th><th class="num">Diferencia</th>
+            </tr></thead>
+            <tbody>
+              ${orden.map(f => `
+                <tr>
+                  <td><span class="co__name">${UTIL.esc(f.n)}</span>
+                    ${f.v > 0 && !f.vp ? ' <span class="badge badge--blue">Nuevo</span>' : ''}
+                    ${f.mg !== null && f.mg >= 95 ? ' <span class="badge badge--amber">Revisar costo</span>' : ''}</td>
+                  <td class="num money">${UTIL.musd(f.v)}</td>
+                  <td class="num">${UTIL.num(pctDe(f.v, totalVenta))}%</td>
+                  <td class="num money">${f.vp ? UTIL.musd(f.vp) : '—'}</td>
+                  <td class="num">${delta(varPct(f.v, f.vp))}</td>
+                  <td class="num">${f.mg === null ? '—' : UTIL.num(f.mg) + '%'}</td>
+                  <td class="num">${f.mgp === null ? '—' : UTIL.num(f.mgp) + '%'}</td>
+                  <td class="num">${f.mg === null || f.mgp === null ? '—' : pts(f.mg - f.mgp)}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>`;
+  }
+
+  function renderSociedad(root, e) {
+    const S = PBI.soc[e.nombre] || {};
+    const c = S.corte || e.ultima, y = +c.slice(0, 4), m = +c.slice(5, 7), cAnt = masAnios(c, -1);
+    const uno = new Set([e.i]);
+    const acum = suma(uno, iniMes(y, 1), c), acumAnt = suma(uno, iniMes(y - 1, 1), cAnt);
+    const mes  = suma(uno, iniMes(y, m), c), mesAnt  = suma(uno, iniMes(y - 1, m), cAnt);
+    const mg = pctDe(acum.mb, acum.v), mgAnt = pctDe(acumAnt.mb, acumAnt.v);
+    const proy = e.alDia && PBI.proy[e.nombre] ? PBI.proy[e.nombre] / 1e6 : null;
+
+    const meses = [];
+    for (let k = 11; k >= 0; k--) {
+      const d = new Date(Date.UTC(y, m - 1 - k, 1));
+      const yy = d.getUTCFullYear(), mm = d.getUTCMonth() + 1, actual = k === 0;
+      const hasta = actual ? c : finMes(yy, mm);
+      meses.push({ label:MESES[mm - 1] + ' ' + String(yy).slice(2) + (actual ? '*' : ''),
+                   cur:suma(uno, iniMes(yy, mm), hasta),
+                   ant:suma(uno, iniMes(yy - 1, mm), actual ? masAnios(hasta, -1) : finMes(yy - 1, mm)) });
+    }
+    const maxV = Math.max.apply(null, meses.map(x => x.cur.v).concat([1]));
+
+    const tarjetas = [
+      { k:'Venta acumulada ' + y, v:UTIL.musd(acum.v), d:delta(varPct(acum.v, acumAnt.v)), s:'vs. mismo período ' + (y - 1) },
+      { k:'Margen bruto', v:UTIL.musd(acum.mb), d:pts(mg - mgAnt), s:UTIL.num(mg) + '% · era ' + UTIL.num(mgAnt) + '%' },
+      { k:'Venta ' + MESES[m - 1] + ' al día ' + +c.slice(8, 10), v:UTIL.musd(mes.v), d:delta(varPct(mes.v, mesAnt.v)),
+        s:proy ? 'proyección de cierre ' + UTIL.musd(proy) : 'vs. mismos días ' + (y - 1) },
+      { k:'Venta a terceros', v:UTIL.musd(acum.ter), d:delta(varPct(acum.ter, acumAnt.ter)),
+        s:UTIL.num(pctDe(acum.ter, acum.v)) + '% de la venta' }
+    ];
+
+    const aviso = e.alDia ? '' : `
+      <div class="inv-banner inv-banner--warn">
+        <span class="inv-banner__ico">${UTIL.icon('i-alert', 'ico ico--xs')}</span>
+        <div><b>Sin despachos en el modelo desde el ${fechaLarga(e.ultima)}.</b>
+          <div class="inv-banner__d">Las cifras y comparaciones de esta página llegan hasta esa fecha; no reflejan el año completo.</div></div>
+      </div>`;
+    const periodo = `Acumulado ${y} al ${fechaCorta(c)} contra los mismos días de ${y - 1}`;
+
+    root.innerHTML = `
+      <div class="mod-head">
+        <div>
+          <div class="crumb">Empresas</div>
+          <h2 class="mod-title">${UTIL.esc(e.nombre)}</h2>
+          <p class="mod-sub">Venta y margen bruto · Power BI · corte <b>${fechaLarga(c)}</b> · millones de CLP.</p>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn--ghost btn--sm" data-nav="home">Volver a Home</button>
+          <button class="btn btn--primary btn--sm" data-ai="Analiza el desempeño de ${UTIL.esc(e.nombre)}">
+            ${UTIL.icon('i-spark', 'ico ico--xs')} Preguntar a Paco AI
+          </button>
+        </div>
+      </div>
+      ${aviso}
+      <div class="kpi-row" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        ${tarjetas.map(t => `
+          <article class="kpi" style="--kpi-accent:#3B82F6">
+            <div class="kpi__label">${UTIL.esc(t.k)}</div>
+            <div class="kpi__value"><span class="money">${t.v}</span></div>
+            <div class="kpi__meta">${t.d}<span>${UTIL.esc(t.s)}</span></div>
+          </article>`).join('')}
+      </div>
+
+      <section class="panel">
+        <header class="panel__head">
+          <div>
+            <h2 class="panel__title">Evolución mensual</h2>
+            <p class="panel__sub">Últimos 12 meses contra el mismo mes del año anterior · *mes en curso al ${fechaCorta(c)}, comparado con los mismos días</p>
+          </div>
+        </header>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr>
+              <th>Mes</th><th class="num">Venta</th><th style="width:20%"></th><th class="num">Año anterior</th>
+              <th class="num">Var.</th><th class="num">Margen %</th><th class="num">Margen % ant.</th><th class="num">Diferencia</th>
+            </tr></thead>
+            <tbody>
+              ${meses.map(x => `
+                <tr>
+                  <td>${x.label}</td>
+                  <td class="num money">${UTIL.musd(x.cur.v)}</td>
+                  <td><div class="biz__track"><i class="biz__fill" style="background:#3B82F6" data-w="${(x.cur.v / maxV) * 100}"></i></div></td>
+                  <td class="num money">${x.ant.v ? UTIL.musd(x.ant.v) : '—'}</td>
+                  <td class="num">${delta(varPct(x.cur.v, x.ant.v))}</td>
+                  <td class="num">${x.cur.v ? UTIL.num(pctDe(x.cur.mb, x.cur.v)) + '%' : '—'}</td>
+                  <td class="num">${x.ant.v ? UTIL.num(pctDe(x.ant.mb, x.ant.v)) + '%' : '—'}</td>
+                  <td class="num">${x.cur.v && x.ant.v ? pts(pctDe(x.cur.mb, x.cur.v) - pctDe(x.ant.mb, x.ant.v)) : '—'}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      ${tablaDetalle('Venta por ' + (S.dimension || 'categoría').toLowerCase(), periodo, S.dimension || 'Categoría', S.desglose, acum.v)}
+      ${tablaDetalle('Principales clientes', periodo + ' · 15 mayores por venta · incluye empresas relacionadas', 'Cliente', S.clientes, acum.v, 15)}
+
+      <section class="panel">
+        <p class="panel__sub">Venta = medida «${UTIL.esc(PBI.meta.medidas.venta)}»; costo = «${UTIL.esc(PBI.meta.medidas.costo)}».
+           Margen bruto = venta menos costo directo; no es EBITDA. <b>Revisar costo</b> marca las filas con margen de 95% o más,
+           donde el modelo casi no trae costo cargado.</p>
+      </section>`;
+
+    requestAnimationFrame(() => $$('[data-w]', root).forEach(el => { el.style.width = el.dataset.w + '%'; }));
+  }
+
+  /** Reemplaza el grupo "Empresas" del menú por las sociedades reales del modelo. */
+  function navegacionSociedades() {
+    const ytd = rango('ytd');
+    const orden = PBI.info.slice().sort((a, b) =>
+      suma(new Set([b.i]), ytd.d, ytd.h).v - suma(new Set([a.i]), ytd.d, ytd.h).v);
+    const g = DATA.nav.find(x => x.id === 'empresas');
+    if (g) g.items = orden.map(e => ({ id:'e-' + e.id, name:e.nombre }));
+
+    const existe = id => DATA.nav.some(x => x.items.some(i => i.id === id));
+    orden.forEach(e => {
+      const r = root => renderSociedad(root, e);
+      UI.moduleRenderers['e-' + e.id] = r;
+      if (existe(e.id)) UI.moduleRenderers[e.id] = r;       // p. ej. Grupo TX → Hormigones / Morteros
+    });
+    UI.renderNav();
+  }
+
+  /* ======================================================================
      Aplicación sobre DATA
      ====================================================================== */
   function aplicar() {
@@ -518,7 +861,12 @@
 
     PBI.meta = json.meta; PBI.empresas = json.empresas; PBI.filas = json.filas;
     PBI.proy = json.proyeccionMes || {}; PBI.corte = json.meta.corte;
+    const a = json.adhesivos;
+    PBI.adh = a && Array.isArray(a.filas) && a.filas.length && Array.isArray(a.grupos) && a.corte ? a : null;
+    PBI.soc = json.sociedades || {};
     prepararSociedades();
+    navegacionSociedades();
+    if (PBI.adh) UI.moduleRenderers.adhesivos = renderAdhesivos;
 
     DATA.real     = true;
     DATA.moneda   = 'CLP';

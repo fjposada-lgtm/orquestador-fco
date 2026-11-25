@@ -74,6 +74,7 @@ function Num($x) { if ($null -eq $x) { '0' } else { ([Math]::Round([double]$x)).
 $empresas = New-Object System.Collections.Generic.List[string]
 $filas    = New-Object System.Collections.Generic.List[string]
 $corte    = ''
+$ultima   = @{}                                                    # ultima fecha con venta por empresa
 $anioFin  = (Get-Date).Year
 
 foreach ($y in $DesdeAnio..$anioFin) {
@@ -97,6 +98,7 @@ FILTER(
         $i = $empresas.IndexOf($e)
         if ($i -lt 0) { $empresas.Add($e); $i = $empresas.Count - 1 }
         if ($f -gt $corte) { $corte = $f }
+        if ([double]$r.'[v]' -gt 0 -and $f -gt [string]$ultima[$e]) { $ultima[$e] = $f }
         $filas.Add('["' + $f + '",' + $i + ',' + (Num $r.'[v]') + ',' + (Num $r.'[c]') + ',' + (Num $r.'[r]') + ']')
     }
 }
@@ -115,8 +117,111 @@ SUMMARIZECOLUMNS(
 $proyTxt = @($proy | Where-Object { $null -ne $_.'[p]' } | ForEach-Object {
     '"' + ([string]$_.'Empresas[Empresa]').Replace('"', '\"') + '":' + (Num $_.'[p]') }) -join ','
 
-# --- 5. Escritura -------------------------------------------------------------
-$empTxt = @($empresas | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ','
+# --- 5. Linea Adhesivos: Planta Adhesivos dentro de Morteros TX ---------------
+# La medida corporativa suma todas las sociedades; se acota a Morteros TX para
+# que el filtro de planta (columna de sus guias) defina por completo el alcance.
+$alcance = 'TREATAS({"Morteros TX"}, Empresas[Empresa]), TREATAS({"Planta Adhesivos"}, Guias_de_Despacho_SAP_GTX[Planta.1])'
+Write-Host '  Leyendo linea Adhesivos ...' -ForegroundColor DarkGray
+
+$adhFilas = New-Object System.Collections.Generic.List[string]
+$adhCorte = ''
+$rows = Consultar @"
+EVALUATE
+FILTER(
+  SUMMARIZECOLUMNS(
+    Dias_Laborales[Fecha],
+    FILTER(ALL(Dias_Laborales[$col]), Dias_Laborales[$col] >= $DesdeAnio),
+    $alcance,
+    "v", [Despachado Total Corporativo],
+    "c", [Costo Total Corporativo]
+  ),
+  NOT ISBLANK([v]) || NOT ISBLANK([c])
+)
+"@
+foreach ($r in $rows) {
+    $f = ([datetime]$r.'Dias_Laborales[Fecha]').ToString('yyyy-MM-dd')
+    if ($f -gt $adhCorte) { $adhCorte = $f }
+    $adhFilas.Add('["' + $f + '",' + (Num $r.'[v]') + ',' + (Num $r.'[c]') + ']')
+}
+
+# Detalle por familia: acumulado del anio al corte contra los mismos dias del anio anterior
+$adhGrupos = New-Object System.Collections.Generic.List[string]
+if ($adhCorte) {
+    $ay = [int]$adhCorte.Substring(0, 4); $am = [int]$adhCorte.Substring(5, 2); $ad = [int]$adhCorte.Substring(8, 2)
+    $adPrev = [Math]::Min($ad, [datetime]::DaysInMonth($ay - 1, $am))
+    $act = "Dias_Laborales[Fecha] >= DATE($ay, 1, 1), Dias_Laborales[Fecha] <= DATE($ay, $am, $ad)"
+    $ant = "Dias_Laborales[Fecha] >= DATE($($ay - 1), 1, 1), Dias_Laborales[Fecha] <= DATE($($ay - 1), $am, $adPrev)"
+    $rows = Consultar @"
+EVALUATE
+SUMMARIZECOLUMNS(
+  Guias_de_Despacho_SAP_GTX[Grupo de Articulo 2],
+  $alcance,
+  "v",  CALCULATE([Despachado Total Corporativo], $act),
+  "c",  CALCULATE([Costo Total Corporativo], $act),
+  "vp", CALCULATE([Despachado Total Corporativo], $ant),
+  "cp", CALCULATE([Costo Total Corporativo], $ant)
+)
+"@
+    foreach ($r in $rows) {
+        if ($null -eq $r.'[v]' -and $null -eq $r.'[vp]') { continue }
+        $n = ([string]$r.'Guias_de_Despacho_SAP_GTX[Grupo de Articulo 2]').Replace('\', '\\').Replace('"', '\"')
+        $adhGrupos.Add('["' + $n + '",' + (Num $r.'[v]') + ',' + (Num $r.'[c]') + ',' + (Num $r.'[vp]') + ',' + (Num $r.'[cp]') + ']')
+    }
+}
+
+# --- 6. Detalle por sociedad: desglose propio y principales clientes ----------
+# Cada sociedad se compara hasta SU ultima fecha con venta, contra los mismos
+# dias del anio anterior. El desglose usa la dimension propia de sus guias.
+$dimension = @{
+    'Hormigones TX'    = @('Planta',   'Guias_de_Despacho_Comand_HTX[Planta]')
+    'Morteros TX'      = @('Planta',   'Guias_de_Despacho_SAP_GTX[Planta.1]')
+    'Cementos TX'      = @('Segmento', 'Guias_de_Despacho_SAP_CTX[Segmento]')
+    'Distribuidora TX' = @('Familia',  'Guias_de_Despacho_Softland_DCTX[Grupo de Articulo]')
+    'Minera TX'        = @('Planta',   'Guias_de_Despacho_MR[Planta]')
+}
+function Txt($s) { ([string]$s).Replace('\', '\\').Replace('"', '\"') }
+
+$socTxt = New-Object System.Collections.Generic.List[string]
+foreach ($e in $empresas) {
+    $u = [string]$ultima[$e]
+    if (-not $u) { continue }
+    Write-Host "  Leyendo detalle de $e ..." -ForegroundColor DarkGray
+    $uy = [int]$u.Substring(0, 4); $um = [int]$u.Substring(5, 2); $ud = [int]$u.Substring(8, 2)
+    $udPrev = [Math]::Min($ud, [datetime]::DaysInMonth($uy - 1, $um))
+    $act = "Dias_Laborales[Fecha] >= DATE($uy, 1, 1), Dias_Laborales[Fecha] <= DATE($uy, $um, $ud)"
+    $ant = "Dias_Laborales[Fecha] >= DATE($($uy - 1), 1, 1), Dias_Laborales[Fecha] <= DATE($($uy - 1), $um, $udPrev)"
+    $soc = 'TREATAS({"' + $e + '"}, Empresas[Empresa])'
+    $medidas = @"
+  "v",  CALCULATE([Despachado Total Corporativo], $act),
+  "c",  CALCULATE([Costo Total Corporativo], $act),
+  "vp", CALCULATE([Despachado Total Corporativo], $ant),
+  "cp", CALCULATE([Costo Total Corporativo], $ant)
+"@
+
+    $desTxt = ''; $dimNombre = ''
+    if ($dimension.ContainsKey($e)) {
+        $dimNombre = $dimension[$e][0]; $dimCol = $dimension[$e][1]
+        $rows = Consultar "EVALUATE SUMMARIZECOLUMNS($dimCol, $soc,`n$medidas)"
+        $desTxt = @($rows | Where-Object { $null -ne $_.'[v]' -or $null -ne $_.'[vp]' } | ForEach-Object {
+            '["' + (Txt $_.$dimCol) + '",' + (Num $_.'[v]') + ',' + (Num $_.'[c]') + ',' + (Num $_.'[vp]') + ',' + (Num $_.'[cp]') + ']' }) -join ','
+    }
+
+    # El listado corporativo de clientes no filtra las guias de Cementos ni de
+    # Distribuidora; para esas dos se usa la columna de cliente de su propia tabla.
+    $cliCol = switch ($e) {
+        'Cementos TX'      { 'Guias_de_Despacho_SAP_CTX[Nombre de cliente/proveedor]' }
+        'Distribuidora TX' { 'Guias_de_Despacho_Softland_DCTX[Destino]' }
+        default            { 'Listado_de_Clientes_Corporativo[Cliente]' }
+    }
+    $rows = Consultar "EVALUATE TOPN(15, SUMMARIZECOLUMNS($cliCol, $soc,`n$medidas), [v], DESC)"
+    $cliTxt = @($rows | Where-Object { $null -ne $_.'[v]' } | Sort-Object { -[double]$_.'[v]' } | ForEach-Object {
+        '["' + (Txt $_.$cliCol) + '",' + (Num $_.'[v]') + ',' + (Num $_.'[c]') + ',' + (Num $_.'[vp]') + ',' + (Num $_.'[cp]') + ']' }) -join ','
+
+    $socTxt.Add('"' + (Txt $e) + '": { "corte": "' + $u + '", "dimension": "' + $dimNombre + '", "desglose": [' + $desTxt + '], "clientes": [' + $cliTxt + '] }')
+}
+
+# --- 7. Escritura -------------------------------------------------------------
+$empTxt =@($empresas | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ','
 $json = @"
 {
   "meta": {
@@ -137,6 +242,17 @@ $json = @"
   },
   "empresas": [$empTxt],
   "proyeccionMes": { $proyTxt },
+  "sociedades": {
+    $($socTxt -join ",`n    ")
+  },
+  "adhesivos": {
+    "definicion": "Morteros TX, despachos con Planta.1 = Planta Adhesivos",
+    "corte": "$adhCorte",
+    "columnasFilas": ["fecha", "venta", "costo"],
+    "columnasGrupos": ["familia", "ventaAcum", "costoAcum", "ventaAcumAnterior", "costoAcumAnterior"],
+    "grupos": [$($adhGrupos -join ',')],
+    "filas": [$($adhFilas -join ',')]
+  },
   "filas": [
 $($filas -join ",`n")
   ]
